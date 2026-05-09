@@ -1,73 +1,57 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface UseSublyProps {
   userId: string | undefined;
-  language: string;
+  targetLanguage: string;
 }
 
-// Downsample de audio
-function downsampleBuffer(buffer: Float32Array, inputRate: number, outputRate: number): Float32Array {
-  if (inputRate === outputRate) return buffer;
-  const ratio = inputRate / outputRate;
-  const newLength = Math.round(buffer.length / ratio);
-  const result = new Float32Array(newLength);
-  let offsetResult = 0;
-  let offsetBuffer = 0;
-  while (offsetResult < result.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-    let accum = 0, count = 0;
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-      accum += buffer[i];
-      count++;
-    }
-    result[offsetResult] = accum / count;
-    offsetResult++;
-    offsetBuffer = nextOffsetBuffer;
+// ============================================
+// Traducir texto via nuestra API
+// ============================================
+async function translateText(text: string, targetLang: string): Promise<string> {
+  try {
+    const res = await fetch('/api/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, targetLang })
+    });
+    const data = await res.json();
+    return data.translated || text;
+  } catch {
+    return text;
   }
-  return result;
 }
 
-// Float32 PCM -> Int16 PCM -> Base64
-function float32ToBase64PCM(float32: Float32Array): string {
-  const pcm16 = new Int16Array(float32.length);
-  for (let i = 0; i < float32.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
-    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-  }
-  const bytes = new Uint8Array(pcm16.buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
-}
-
-export const useSubly = ({ userId, language }: UseSublyProps) => {
+export const useSubly = ({ userId, targetLanguage }: UseSublyProps) => {
   const [isRecording, setIsRecording] = useState(false);
   const [transcripts, setTranscripts] = useState<string[]>([]);
   const [audioLevel, setAudioLevel] = useState(0);
+  const [detectedLang, setDetectedLang] = useState<string>("");
+  
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const animFrameRef = useRef<number | null>(null);
-
+  const levelIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const targetLangRef = useRef(targetLanguage);
   const fullSessionTextRef = useRef<string>("");
+
+  // Mantener ref sincronizado
+  useEffect(() => { targetLangRef.current = targetLanguage; }, [targetLanguage]);
 
   const startCapture = async () => {
     try {
       // 1. Obtener audio stream
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true
-        });
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       } catch {
-        console.log("Pantalla cancelada, usando micrófono...");
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log("📱 Usando micrófono...");
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+        });
       }
       mediaStreamRef.current = stream;
 
@@ -77,165 +61,277 @@ export const useSubly = ({ userId, language }: UseSublyProps) => {
         stream.getTracks().forEach(t => t.stop());
         return;
       }
-      console.log("✅ Audio tracks:", audioTracks.length, audioTracks[0].label);
+      console.log("✅ Audio:", audioTracks[0].label);
 
       setIsRecording(true);
+      setTranscripts([]);
       fullSessionTextRef.current = "";
 
       // 2. Obtener token
-      console.log("🔑 Solicitando token...");
-      const response = await fetch('/api/elevenlabs');
-      const data = await response.json();
-
-      if (!response.ok || !data.token) {
-        console.error("❌ Token error:", data.error);
-        alert("Error token: " + (data.error || "vacío"));
+      const tokenRes = await fetch('/api/elevenlabs');
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.token) {
+        alert("Error token: " + (tokenData.error || "vacío"));
         setIsRecording(false);
         stream.getTracks().forEach(t => t.stop());
         return;
       }
-      console.log("✅ Token obtenido");
 
-      // 3. WebSocket - construir URL con parámetros como el SDK oficial
+      // 3. Construir URL exactamente como el SDK
       const params = new URLSearchParams();
       params.append("model_id", "scribe_v2_realtime");
-      params.append("token", data.token);
+      params.append("token", tokenData.token);
       params.append("audio_format", "pcm_16000");
-      if (language && language !== "auto") {
-        params.append("language_code", language);
-      }
-      
-      const wsUrl = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
-      console.log("🔌 Conectando WebSocket...");
-      socketRef.current = new WebSocket(wsUrl);
 
-      socketRef.current.onopen = async () => {
-        console.log("✅ WebSocket Conectado");
-        
-        const audioContext = new AudioContext();
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
+      const ws = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`);
+      socketRef.current = ws;
+
+      ws.onopen = async () => {
+        console.log("✅ WebSocket conectado");
+
+        // Crear AudioContext al sample rate nativo del stream
+        const trackSettings = stream.getAudioTracks()[0]?.getSettings();
+        const streamSampleRate = trackSettings?.sampleRate;
+        const audioContext = new AudioContext(streamSampleRate ? { sampleRate: streamSampleRate } : {});
         audioContextRef.current = audioContext;
-        const nativeSampleRate = audioContext.sampleRate;
-        console.log("🎵 Sample rate nativo:", nativeSampleRate);
+
+        const nativeRate = audioContext.sampleRate;
+        const TARGET_RATE = 16000;
+        console.log("🎵 Nativo:", nativeRate, "→ Target:", TARGET_RATE);
+
+        // Registrar el AudioWorklet para procesar audio
+        // (Inline worklet via Blob URL)
+        const workletCode = `
+          class SublyProcessor extends AudioWorkletProcessor {
+            constructor() {
+              super();
+              this.buffer = [];
+              this.bufferSize = 4096;
+              this.inputSampleRate = null;
+              this.outputSampleRate = null;
+              this.resampleRatio = 1;
+              this.lastSample = 0;
+              this.resampleAccumulator = 0;
+              
+              this.port.onmessage = ({ data }) => {
+                if (data.type === "configure") {
+                  this.inputSampleRate = data.inputSampleRate;
+                  this.outputSampleRate = data.outputSampleRate;
+                  if (this.inputSampleRate && this.outputSampleRate) {
+                    this.resampleRatio = this.inputSampleRate / this.outputSampleRate;
+                  }
+                }
+              };
+            }
+
+            resample(inputData) {
+              if (this.resampleRatio === 1 || !this.inputSampleRate) return inputData;
+              const outputSamples = [];
+              for (let i = 0; i < inputData.length; i++) {
+                const currentSample = inputData[i];
+                while (this.resampleAccumulator < 1) {
+                  const interpolated = this.lastSample + (currentSample - this.lastSample) * this.resampleAccumulator;
+                  outputSamples.push(interpolated);
+                  this.resampleAccumulator += this.resampleRatio;
+                }
+                this.resampleAccumulator -= 1;
+                this.lastSample = currentSample;
+              }
+              return new Float32Array(outputSamples);
+            }
+
+            process(inputs) {
+              const input = inputs[0];
+              if (input.length > 0) {
+                let channelData = input[0];
+                if (this.resampleRatio !== 1) {
+                  channelData = this.resample(channelData);
+                }
+                for (let i = 0; i < channelData.length; i++) {
+                  this.buffer.push(channelData[i]);
+                }
+                if (this.buffer.length >= this.bufferSize) {
+                  const float32 = new Float32Array(this.buffer);
+                  const int16 = new Int16Array(float32.length);
+                  for (let i = 0; i < float32.length; i++) {
+                    const s = Math.max(-1, Math.min(1, float32[i]));
+                    int16[i] = s < 0 ? s * 32768 : s * 32767;
+                  }
+                  this.port.postMessage({ audioData: int16.buffer }, [int16.buffer]);
+                  this.buffer = [];
+                }
+              }
+              return true;
+            }
+          }
+          registerProcessor("subly-processor", SublyProcessor);
+        `;
+
+        const blob = new Blob([workletCode], { type: 'application/javascript' });
+        const workletUrl = URL.createObjectURL(blob);
+        
+        try {
+          await audioContext.audioWorklet.addModule(workletUrl);
+        } catch (e) {
+          console.error("AudioWorklet failed, falling back...", e);
+        }
+        URL.revokeObjectURL(workletUrl);
 
         const source = audioContext.createMediaStreamSource(stream);
-        
+
         // Analyser para nivel visual
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
         analyserRef.current = analyser;
         source.connect(analyser);
 
+        // Monitor de nivel de audio (usa setInterval para funcionar en background)
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        const checkLevel = () => {
+        levelIntervalRef.current = setInterval(() => {
           if (!analyserRef.current) return;
           analyserRef.current.getByteFrequencyData(dataArray);
           const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
           setAudioLevel(avg / 128);
-          animFrameRef.current = requestAnimationFrame(checkLevel);
-        };
-        checkLevel();
+        }, 100);
 
-        // ScriptProcessor para capturar audio
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
-        processorRef.current = processor;
-        source.connect(processor);
-        processor.connect(audioContext.destination);
+        // Crear AudioWorkletNode
+        const workletNode = new AudioWorkletNode(audioContext, "subly-processor");
+        workletNodeRef.current = workletNode;
 
-        processor.onaudioprocess = (e) => {
-          if (socketRef.current?.readyState !== WebSocket.OPEN) return;
-          
-          const inputData = e.inputBuffer.getChannelData(0);
-          
-          // Downsample de 48kHz a 16kHz
-          const downsampled = downsampleBuffer(inputData, nativeSampleRate, 16000);
-          
-          // Convertir a Base64
-          const audioBase64 = float32ToBase64PCM(downsampled);
+        // Configurar resampling si es necesario
+        if (nativeRate !== TARGET_RATE) {
+          workletNode.port.postMessage({
+            type: "configure",
+            inputSampleRate: nativeRate,
+            outputSampleRate: TARGET_RATE,
+          });
+        }
 
-          // *** PROTOCOLO OFICIAL: JSON con message_type ***
-          const message = JSON.stringify({
+        // Recibir audio procesado del worklet y enviar al WebSocket
+        workletNode.port.onmessage = (event) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+
+          const { audioData } = event.data;
+          // Convertir ArrayBuffer a Base64 (exactamente como el SDK)
+          const bytes = new Uint8Array(audioData);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const audioBase64 = btoa(binary);
+
+          // Enviar en formato protocolo oficial
+          ws.send(JSON.stringify({
             message_type: "input_audio_chunk",
             audio_base_64: audioBase64,
             commit: false,
-            sample_rate: 16000
-          });
-          
-          socketRef.current.send(message);
+            sample_rate: TARGET_RATE,
+          }));
         };
 
-        console.log("🎤 Audio pipeline activo, enviando chunks...");
+        // Conectar pipeline
+        source.connect(workletNode);
+
+        // Resumir si está suspendido
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+
+        console.log("🎤 Pipeline de audio activo");
       };
 
-      socketRef.current.onmessage = (event) => {
+      // ============================================
+      // Manejar mensajes del WebSocket
+      // ============================================
+      ws.onmessage = async (event) => {
         try {
-          const received = JSON.parse(event.data);
-          
-          switch (received.message_type) {
+          const msg = JSON.parse(event.data);
+
+          switch (msg.message_type) {
             case "session_started":
-              console.log("🟢 Sesión iniciada:", received.session_id);
+              console.log("🟢 Sesión:", msg.session_id);
               break;
-            
-            case "partial_transcript":
-              if (received.text?.trim()) {
-                console.log("📝 [parcial]:", received.text);
+
+            case "partial_transcript": {
+              const text = msg.text?.trim();
+              if (!text) break;
+              
+              const lang = targetLangRef.current;
+              
+              // Traducir parciales también para que sea en tiempo real
+              if (lang && lang !== "auto") {
+                translateText(text, lang).then(translated => {
+                  setTranscripts(prev => {
+                    const updated = [...prev];
+                    // Reemplazar última entrada parcial
+                    if (updated.length > 0 && updated[updated.length - 1].startsWith('⏳')) {
+                      updated[updated.length - 1] = `⏳ ${translated}`;
+                    } else {
+                      updated.push(`⏳ ${translated}`);
+                    }
+                    return updated.slice(-6);
+                  });
+                });
+              } else {
                 setTranscripts(prev => {
                   const updated = [...prev];
-                  if (updated.length > 0) {
-                    updated[updated.length - 1] = received.text;
+                  if (updated.length > 0 && updated[updated.length - 1].startsWith('⏳')) {
+                    updated[updated.length - 1] = `⏳ ${text}`;
                   } else {
-                    updated.push(received.text);
+                    updated.push(`⏳ ${text}`);
                   }
                   return updated.slice(-6);
                 });
               }
               break;
-            
-            case "committed_transcript":
-              if (received.text?.trim()) {
-                console.log("✅ [FINAL]:", received.text);
-                setTranscripts(prev => [...prev, received.text].slice(-6));
-                fullSessionTextRef.current += received.text + " ";
-              }
-              break;
+            }
 
-            case "committed_transcript_with_timestamps":
-              if (received.text?.trim()) {
-                console.log("✅ [FINAL+TS]:", received.text);
-                setTranscripts(prev => [...prev, received.text].slice(-6));
-                fullSessionTextRef.current += received.text + " ";
+            case "committed_transcript":
+            case "committed_transcript_with_timestamps": {
+              const text = msg.text?.trim();
+              if (!text) break;
+              console.log("✅ Final:", text);
+
+              if (msg.language) setDetectedLang(msg.language);
+
+              const lang = targetLangRef.current;
+              if (lang && lang !== "auto") {
+                const translated = await translateText(text, lang);
+                console.log("🌐 Traducido:", translated);
+                setTranscripts(prev => {
+                  // Reemplazar la última entrada parcial con la final traducida
+                  const cleaned = prev.filter(t => !t.startsWith('⏳'));
+                  return [...cleaned, translated].slice(-6);
+                });
+                fullSessionTextRef.current += translated + "\n";
+              } else {
+                setTranscripts(prev => {
+                  const cleaned = prev.filter(t => !t.startsWith('⏳'));
+                  return [...cleaned, text].slice(-6);
+                });
+                fullSessionTextRef.current += text + "\n";
               }
               break;
+            }
 
             case "insufficient_audio_activity":
-              console.warn("⚠️ Actividad de audio insuficiente - ElevenLabs no detecta habla");
+              console.warn("⚠️ Sin habla detectada");
               break;
-            
+
             case "input_error":
-              console.warn("⚠️ Input error:", received.error);
-              break;
-            
-            case "session_ended":
-              console.log("🔴 Sesión terminada por ElevenLabs");
+              console.warn("⚠️", msg.error);
               break;
 
             default:
-              console.log("📩", received.message_type, JSON.stringify(received).substring(0, 200));
+              console.log("📩", msg.message_type);
           }
         } catch (e) {
           console.error("Parse error:", e);
         }
       };
 
-      socketRef.current.onerror = (err) => {
-        console.error("❌ WebSocket Error:", err);
-      };
-
-      socketRef.current.onclose = (event) => {
-        console.log(`🔴 WS cerrado. Código: ${event.code}, Razón: ${event.reason || "N/A"}, Clean: ${event.wasClean}`);
-      };
+      ws.onerror = () => console.error("❌ WebSocket error");
+      ws.onclose = (ev) => console.log(`🔴 WS cerrado: ${ev.code}`);
 
     } catch (err) {
       console.error("Error:", err);
@@ -245,25 +341,26 @@ export const useSubly = ({ userId, language }: UseSublyProps) => {
   };
 
   const stopCapture = useCallback(async () => {
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = null;
+    // Limpiar nivel de audio
+    if (levelIntervalRef.current) {
+      clearInterval(levelIntervalRef.current);
+      levelIntervalRef.current = null;
     }
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+    // Desconectar worklet
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
     }
     analyserRef.current = null;
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      // Commit final antes de cerrar (protocolo oficial)
+    // Commit final y cerrar WS
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
         message_type: "input_audio_chunk",
         audio_base_64: "",
         commit: true,
         sample_rate: 16000
       }));
-      // Dar un momento para recibir la transcripción final
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(r => setTimeout(r, 1000));
       socketRef.current.close(1000, "User ended session");
     }
     socketRef.current = null;
@@ -272,38 +369,27 @@ export const useSubly = ({ userId, language }: UseSublyProps) => {
       audioContextRef.current = null;
     }
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current.getTracks().forEach(t => t.stop());
       mediaStreamRef.current = null;
     }
-    
+
     setIsRecording(false);
     setAudioLevel(0);
 
-    const textToSave = fullSessionTextRef.current.trim();
-    if (userId && textToSave.length > 0) {
-      console.log("💾 Guardando...", textToSave.substring(0, 100));
-      const { data, error } = await supabase
+    // Guardar en Supabase
+    const text = fullSessionTextRef.current.trim();
+    if (userId && text.length > 0) {
+      console.log("💾 Guardando...");
+      const { error } = await supabase
         .from('transcriptions')
-        .insert({
-          user_id: userId,
-          content: textToSave,
-          title: `Sesión ${new Date().toLocaleString()}`
-        })
+        .insert({ user_id: userId, content: text, title: `Sesión ${new Date().toLocaleString()}` })
         .select();
-      
-      if (error) {
-        console.error("❌ Error guardando:", error);
-        alert("Error al guardar: " + error.message);
-      } else {
-        console.log("✅ Guardado:", data);
-      }
-      
+      if (error) console.error("❌", error);
+      else console.log("✅ Guardado");
       fullSessionTextRef.current = "";
       setTranscripts([]);
-    } else {
-      console.log("⚠️ No hay texto para guardar");
     }
   }, [userId]);
 
-  return { isRecording, transcripts, audioLevel, startCapture, stopCapture };
+  return { isRecording, transcripts, audioLevel, detectedLang, startCapture, stopCapture };
 };
