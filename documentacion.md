@@ -1,40 +1,63 @@
-SUBLY
-🏗️ Arquitectura del Sistema
-El flujo de datos debe ser constante y de baja latencia. No podemos esperar a que la persona termine de hablar para procesar el audio.
-________________________________________
-📅 Planificación del Proyecto (Roadmap)
-Fase 1: Entorno y Configuración Inicial
-•	Setup: Inicializar Next.js con TypeScript (altamente recomendado para manejar los tipos de los flujos de audio).
-•	UI Base: Crear la interfaz de "consola". Un área oscura donde aparecerá el texto.
-•	Librerías clave:
-o	lucide-react (iconografía).
-o	framer-motion (para que los subtítulos aparezcan con una transición suave).
-Fase 2: El Motor de Captura (Web Audio API)
-Esta es la parte más crítica. Debes configurar el acceso al audio del sistema.
-•	Implementar getDisplayMedia: Crear un hook personalizado que solicite permiso para capturar la pantalla/pestaña y extraiga solo el track de audio.
-•	Procesador de Audio: Configurar un AudioContext para convertir el stream de audio en fragmentos (chunks) de datos crudos (Raw PCM o OGG).
-Fase 3: Integración con la IA (Real-Time ASR)
-Para que sea "en tiempo real", no usaremos peticiones HTTP normales, sino WebSockets.
-•	Elección de API: Recomiendo Deepgram o AssemblyAI por su latencia de menos de 300ms.
-•	API Route en Next.js: Crear una ruta que actúe como proxy para proteger tus llaves de API y gestionar la conexión entre el navegador y el servicio de transcripción.
-Fase 4: Visualización y "Modo Flotante"
-•	Algoritmo de Limpieza: Implementar una lógica que mantenga solo las últimas 3-4 líneas de texto en pantalla para no saturar.
-•	Picture-in-Picture (PiP): Esta es la clave del "segundo plano".
-o	Truco técnico: Crea un <canvas> donde renderices el texto de los subtítulos, convierte ese canvas en un stream de video y lánzalo en un elemento <video> usando el modo PiP. Así, los subtítulos flotarán sobre Zoom.
-Fase 5: Refinamiento y Traducción
-•	Traducción en vuelo: Si el audio es en inglés y los quieres en español, puedes usar el mismo modelo de IA (si soporta traducción directa) o pasar el texto por un modelo rápido de traducción.
-________________________________________
-🛠️ Stack Tecnológico Sugerido
-Componente	Tecnología
-Framework	Next.js 14+ (App Router)
-Lenguaje	TypeScript
-Captura	Web Audio API / getDisplayMedia
-Transcripción	Deepgram SDK (Streaming)
-Estilos	Tailwind CSS
-Despliegue	Vercel
-________________________________________
-⚠️ Bloqueos que debes considerar
-1.	El permiso de audio: El usuario siempre tendrá que marcar manualmente el check de "Compartir audio del sistema" al iniciar. No hay forma de saltarse esto por seguridad del navegador.
-2.	Aislamiento de voces: Si hay mucho ruido de fondo en la llamada, la IA puede confundirse. Es ideal usar un modelo con cancelación de ruido activa.
-3.	Consumo de recursos: Mantener un stream de audio abierto y procesando en Next.js consume batería y CPU. Asegúrate de cerrar los tracks de audio cuando la sesión termine.
+# Prompt Maestro: Proyecto "Subly" (Subtítulos en Tiempo Real)
 
+**Contexto y Rol:**
+Actúa como un Expert Full-Stack Developer especializado en Next.js, Web Audio API y WebSockets. Tu objetivo es generar todo el código funcional, paso a paso, para un proyecto llamado "Subly". Entrégame todos los archivos, comandos de instalación y la estructura del proyecto listos para funcionar.
+
+**Descripción del Proyecto:**
+"Subly" es una aplicación web que captura el audio del sistema o pestaña (a través de `getDisplayMedia`), lo envía en tiempo real a una API de reconocimiento de voz (ASR, usaremos Deepgram), y renderiza los subtítulos obtenidos en una interfaz limpia y oscura. Además, cuenta con un "Modo Flotante" (Picture-in-Picture) que permite ver los subtítulos por encima de otras aplicaciones (como Zoom, Teams o Meet).
+
+---
+
+### 🛠️ Stack Tecnológico Requerido
+*   **Framework:** Next.js 14+ (App Router).
+*   **Lenguaje:** TypeScript (Tipado estricto para eventos de audio y webSockets).
+*   **Estilos:** Tailwind CSS.
+*   **Iconos y Animaciones:** `lucide-react`, `framer-motion` (para transiciones suaves del texto).
+*   **Audio y Streaming:** Web Audio API, `getDisplayMedia`.
+*   **Transcripción IA:** ElevenLabs SDK (Real-time streaming WebSocket).
+*   **Backend y Base de Datos:** Supabase (Auth y PostgreSQL).
+
+---
+
+### 📋 Requerimientos Técnicos y Funcionales a Implementar
+
+**1. Configuración e Interfaz Base:**
+*   Proporciona el comando de instalación inicial (`npx create-next-app...` con los flags necesarios).
+*   Crea una interfaz de usuario ("UI") minimalista, estilo consola oscura, enfocada únicamente en los controles de inicio/parada y la zona de lectura.
+
+**2. Motor de Captura de Audio (El Core):**
+*   Crea un custom hook (ej. `useAudioCapture`) que invoque `navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })`.
+*   Aíla únicamente el `audio track` del stream obtenido.
+*   Usa `AudioContext` para procesar el stream en fragmentos (chunks) y enviarlos por WebSockets.
+*   *Gestión de Memoria:* Implementa el cierre de los tracks de audio y desconexión de websockets de forma limpia al detener la transcripción para evitar fugas de memoria y alto consumo de CPU.
+
+**3. Integración con IA en Tiempo Real (ElevenLabs):**
+*   Crea un Route Handler en Next.js (ej. `app/api/elevenlabs/route.ts`) que genere un Token Temporal de ElevenLabs para proteger la API Key real del frontend.
+*   Implementa el cliente WebSocket en el frontend para conectarse a ElevenLabs usando ese token temporal, asegurando una latencia menor a 300ms.
+
+**4. Visualización y "Modo Flotante" (Picture-in-Picture):**
+*   **Algoritmo de limpieza:** Mantén en la pantalla principal únicamente las últimas 3-4 líneas de subtítulos activos para no saturar visualmente.
+*   **El Truco del PiP:** Implementa la lógica para renderizar los subtítulos en un elemento `<canvas>` oculto, convierte ese canvas en un stream de video (`canvas.captureStream()`), asígnalo a un elemento `<video>` invisible y activa `video.requestPictureInPicture()`. Esto hará que los subtítulos floten por encima de todo el sistema operativo.
+
+**5. Autenticación y Login:**
+*   Implementa un sistema de autenticación utilizando **Supabase Auth** (Login, Registro y Cierre de Sesión).
+*   Protege la ruta de transcripción para que solo usuarios logueados puedan acceder a la aplicación.
+
+**6. Almacenamiento de Traducciones:**
+*   Conecta la aplicación a **Supabase Database (PostgreSQL)**.
+*   Al finalizar una sesión de captura, el texto completo de los subtítulos transcritos/traducidos debe guardarse en la base de datos (con un formato equivalente a un `.txt`, es decir, un registro de texto completo asociado al usuario) para que quede guardado el historial.
+
+---
+
+### 🎯 Instrucción Final para la IA (Tú)
+Por favor, a partir de este momento, genera el código completo del proyecto. Necesito:
+1.  La estructura de carpetas que debo seguir.
+2.  Los comandos de instalación de las dependencias.
+3.  El código de `app/page.tsx` (UI principal).
+4.  El código del hook de captura y sockets (ej. `hooks/useSubly.ts`).
+5.  El código de la API Route (`app/api/elevenlabs/route.ts`).
+6.  Cualquier otro componente necesario (ej. Componente PiP).
+7.  La configuración y componentes para el Login/Autenticación con Supabase.
+8.  La lógica de base de datos para almacenar el texto completo (txt) de las transcripciones al finalizar cada sesión.
+
+Escribe el código completo, sin omitir partes clave, para que solo tenga que copiar, pegar y ejecutar.
