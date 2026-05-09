@@ -85,10 +85,11 @@ Las soluciones existentes de subtitulado en tiempo real presentan **limitaciones
 {
   "dependencies": {
     "@elevenlabs/client": "^1.x",
+    "@solana/web3.js": "^1.98.4",
     "@supabase/supabase-js": "^2.x",
-    "framer-motion": "^11.x",
+    "framer-motion": "^12.x",
     "lucide-react": "^0.x",
-    "next": "15.x",
+    "next": "16.x",
     "react": "^19.x",
     "react-dom": "^19.x"
   }
