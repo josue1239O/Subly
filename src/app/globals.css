@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #020617; /* Midnight Blue */
+  --background: #05050A;
   --foreground: #d3e4fe;
 }
 
@@ -23,10 +23,83 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
-  background-image: radial-gradient(circle at top right, rgba(153, 69, 255, 0.15) 0%, transparent 40%),
-                    radial-gradient(circle at bottom left, rgba(0, 255, 163, 0.1) 0%, transparent 40%);
-  background-attachment: fixed;
 }
+
+/* ============================================
+   Custom Animations
+   ============================================ */
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-15px);
+  }
+}
+
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ping-slow {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.animate-ping-slow {
+  animation: ping-slow 3s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.animate-shimmer {
+  animation: shimmer 3s ease-in-out infinite;
+  background-size: 200% 100%;
+}
+
+/* ============================================
+   Custom Scrollbar
+   ============================================ */
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
@@ -39,5 +112,16 @@ body {
   border-radius: 3px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 255, 163, 0.3);
+  background: rgba(34, 211, 238, 0.3);
+}
+
+/* ============================================
+   Grid Texture Pattern
+   ============================================ */
+
+.grid-texture {
+  background-image:
+    linear-gradient(0deg, transparent 24%, rgba(34, 211, 238, .03) 25%, rgba(34, 211, 238, .03) 26%, transparent 27%, transparent 74%, rgba(34, 211, 238, .03) 75%, rgba(34, 211, 238, .03) 76%, transparent 77%, transparent),
+    linear-gradient(90deg, transparent 24%, rgba(34, 211, 238, .03) 25%, rgba(34, 211, 238, .03) 26%, transparent 27%, transparent 74%, rgba(34, 211, 238, .03) 75%, rgba(34, 211, 238, .03) 76%, transparent 77%, transparent);
+  background-size: 50px 50px;
 }

@@ -7,6 +7,7 @@ import { useSubly } from "@/hooks/useSubly";
 import { Mic, Square, LogOut, PictureInPicture2, Loader2, Clock, FileText, Trash2, ChevronDown, ChevronUp, Globe, Languages } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import DonateButton from "@/app/components/DonateButton";
 
 interface Transcription {
   id: string;
@@ -124,10 +125,16 @@ export default function Home() {
   }, []);
 
   // Auto-PiP cuando el usuario sale de la pestaña mientras graba
+  // Note: requestPictureInPicture requires a user gesture in most browsers,
+  // so auto-activation may silently fail. Manual toggle always works.
   useEffect(() => {
-    const handleVisibility = () => {
+    const handleVisibility = async () => {
       if (document.hidden && isRecording) {
-        activatePiP();
+        try {
+          await activatePiP();
+        } catch {
+          // Silently fail - browser requires user gesture for PiP
+        }
       }
     };
 
@@ -289,88 +296,117 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col font-sans">
+    <div className="min-h-screen flex flex-col font-sans overflow-hidden relative bg-[#05050A]">
+      {/* Aurora Background Effects */}
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+        {/* Layer 1: Cyan aurora */}
+        <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-gradient-to-br from-cyan-400/20 to-transparent blur-[120px] rounded-full animate-pulse" style={{ animationDelay: '0s' }}></div>
+        
+        {/* Layer 2: Indigo aurora */}
+        <div className="absolute top-1/3 right-1/4 w-[600px] h-[600px] bg-gradient-to-br from-indigo-600/15 to-transparent blur-[120px] rounded-full animate-pulse" style={{ animationDelay: '1s' }}></div>
+        
+        {/* Layer 3: Fuchsia aurora */}
+        <div className="absolute bottom-0 left-1/2 w-[700px] h-[700px] bg-gradient-to-t from-fuchsia-600/10 to-transparent blur-[120px] rounded-full animate-pulse" style={{ animationDelay: '2s' }}></div>
+      </div>
+
+      {/* Grid Texture Overlay */}
+      <div className="fixed inset-0 z-0 pointer-events-none opacity-5" style={{
+        backgroundImage: 'linear-gradient(0deg, transparent 24%, rgba(0, 255, 163, .05) 25%, rgba(0, 255, 163, .05) 26%, transparent 27%, transparent 74%, rgba(0, 255, 163, .05) 75%, rgba(0, 255, 163, .05) 76%, transparent 77%, transparent), linear-gradient(90deg, transparent 24%, rgba(0, 255, 163, .05) 25%, rgba(0, 255, 163, .05) 26%, transparent 27%, transparent 74%, rgba(0, 255, 163, .05) 75%, rgba(0, 255, 163, .05) 76%, transparent 77%, transparent)',
+        backgroundSize: '50px 50px'
+      }}></div>
+
       {/* Header */}
-      <header className="flex justify-between items-center p-6 border-b border-white/5 bg-background/50 backdrop-blur-md sticky top-0 z-50">
-        <h1 className="text-2xl font-display font-bold text-white tracking-tight flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-primary shadow-[0_0_10px_rgba(0,255,163,0.8)]"></div>
-          Subly
-        </h1>
-        <div className="flex items-center gap-4">
-          <span className="text-[#b9cbbd] text-sm hidden md:inline font-medium bg-surface/30 px-3 py-1 rounded-full border border-white/5">{user.email}</span>
-          <button onClick={handleLogout} className="text-gray-400 hover:text-error transition-colors p-2 hover:bg-white/5 rounded-full">
+      <header className="flex justify-between items-center p-6 border-b border-white/10 bg-white/[0.02] backdrop-blur-xl sticky top-0 z-50 relative">
+        {/* Gradient background for header */}
+        <div className="absolute inset-0 bg-gradient-to-r from-cyan-400/5 via-transparent to-indigo-600/5 pointer-events-none"></div>
+        
+        <div className="relative flex items-center gap-3">
+          <h1 className="text-2xl font-display font-bold text-white tracking-tight flex items-center gap-2">
+            <img src="/logo.png" alt="Subly" className="w-8 h-8 rounded-lg object-contain" />
+            <span className="bg-gradient-to-r from-cyan-400 to-cyan-300 bg-clip-text text-transparent">Subly</span>
+          </h1>
+          <div className="h-6 w-px bg-gradient-to-b from-transparent via-cyan-400/30 to-transparent mx-2"></div>
+          <span className="text-xs bg-cyan-400/10 text-cyan-300 px-2 py-1 rounded-full border border-cyan-400/20 font-medium flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            En línea
+          </span>
+        </div>
+        
+        <div className="relative flex items-center gap-4">
+          <span className="text-[#b9cbbd] text-sm hidden md:inline font-medium bg-white/[0.03] px-3 py-1.5 rounded-lg border border-white/5 backdrop-blur-sm">{user.email}</span>
+          <button onClick={handleLogout} className="text-gray-400 hover:text-cyan-400 transition-colors p-2 hover:bg-white/[0.05] rounded-lg border border-white/0 hover:border-white/10">
             <LogOut size={20} />
           </button>
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col items-center p-6 max-w-5xl mx-auto w-full gap-6">
-        {/* Barra de controles */}
-        <div className="w-full flex flex-wrap justify-between items-center gap-4">
-          <h2 className="text-xl font-display font-semibold text-white">Transmisión en Vivo</h2>
-          
-          <div className="flex items-center gap-3">
-            {/* Selector de idioma = TRADUCIR A */}
-            <div className="relative">
-              <button
-                onClick={() => setShowLangMenu(!showLangMenu)}
-                className="flex items-center gap-2 px-4 py-2 bg-surface/30 text-white border border-white/10 hover:border-primary/30 rounded-lg text-sm font-medium transition-all"
-              >
-                <Languages size={16} className="text-primary" />
-                <span>Traducir: {currentLang.flag} {currentLang.name}</span>
-                <ChevronDown size={14} className="text-gray-400" />
-              </button>
-              
-              <AnimatePresence>
-                {showLangMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute right-0 top-full mt-2 w-56 bg-[#0f1729] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-[350px] overflow-y-auto custom-scrollbar"
-                  >
-                    {LANGUAGES.map((lang) => (
-                      <button
-                        key={lang.code}
-                        onClick={() => {
-                          setSelectedLang(lang.code);
-                          setShowLangMenu(false);
-                        }}
-                        className={`w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-primary/10 transition-colors ${
-                          selectedLang === lang.code
-                            ? "bg-primary/15 text-primary font-medium"
-                            : "text-gray-300"
-                        }`}
-                      >
-                        <span className="text-lg">{lang.flag}</span>
-                        <span>{lang.name}</span>
-                        {selectedLang === lang.code && (
-                          <span className="ml-auto text-primary">✓</span>
-                        )}
-                      </button>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            {/* Botón PiP manual */}
-            <button
-              onClick={togglePiP}
-              className={`flex items-center gap-2 px-4 py-2 border rounded-lg text-sm font-medium transition-all ${
-                isPiPActive 
-                  ? 'bg-primary/20 text-primary border-primary shadow-[0_0_15px_rgba(0,255,163,0.3)]'
-                  : 'bg-transparent text-primary border-primary hover:bg-primary/10 shadow-[0_0_10px_rgba(0,255,163,0.1)]'
-              }`}
-            >
-              <PictureInPicture2 size={16} /> {isPiPActive ? 'PiP Activo' : 'Flotante'}
-            </button>
-          </div>
-        </div>
-
+      <main className="flex-1 flex flex-col items-center p-6 max-w-5xl mx-auto w-full gap-6 relative z-10">
         {/* Panel de Transcripción en Vivo */}
-        <div className="flex-1 w-full bg-surface/15 backdrop-blur-[20px] rounded-[12px] border border-white/10 p-8 flex flex-col justify-end overflow-hidden relative shadow-[0_8px_32px_rgba(0,0,0,0.2)] min-h-[400px]">
+        <div className="flex-1 w-full bg-surface/15 backdrop-blur-[20px] rounded-[12px] border border-white/10 p-8 pt-20 flex flex-col justify-end overflow-hidden relative shadow-[0_8px_32px_rgba(0,0,0,0.2)] min-h-[400px]">
+          {/* Barra de controles superpuesta en la parte superior */}
+          <div className="absolute top-0 left-0 right-0 z-20 flex flex-wrap justify-between items-center gap-4 px-6 py-3 bg-white/[0.03] backdrop-blur-xl border-b border-white/10">
+            <h2 className="text-xl font-display font-semibold text-transparent bg-gradient-to-r from-white to-cyan-300 bg-clip-text">Transmisión en Vivo</h2>
+            
+            <div className="flex items-center gap-2">
+              {/* Selector de idioma con glassmorphism */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowLangMenu(!showLangMenu)}
+                  className="flex items-center gap-2 px-4 py-2 bg-white/[0.05] text-white border border-white/10 hover:border-cyan-400/50 rounded-lg text-sm font-medium transition-all hover:bg-white/[0.08] backdrop-blur-sm"
+                >
+                  <Languages size={16} className="text-cyan-400" />
+                  <span className="hidden sm:inline">Traducir: {currentLang.flag}</span>
+                  <ChevronDown size={14} className="text-gray-400" />
+                </button>
+                
+                <AnimatePresence>
+                  {showLangMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute right-0 top-full mt-2 w-56 bg-[#0f1729]/80 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-[350px] overflow-y-auto custom-scrollbar"
+                    >
+                      {LANGUAGES.map((lang) => (
+                        <button
+                          key={lang.code}
+                          onClick={() => {
+                            setSelectedLang(lang.code);
+                            setShowLangMenu(false);
+                          }}
+                          className={`w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-cyan-400/10 transition-colors ${
+                            selectedLang === lang.code
+                              ? "bg-cyan-400/15 text-cyan-300 font-medium border-l-2 border-cyan-400"
+                              : "text-gray-300"
+                          }`}
+                        >
+                          <span className="text-lg">{lang.flag}</span>
+                          <span>{lang.name}</span>
+                          {selectedLang === lang.code && (
+                            <span className="ml-auto text-cyan-400">✓</span>
+                          )}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Botón PiP mejorado */}
+              <button
+                onClick={togglePiP}
+                className={`flex items-center gap-2 px-4 py-2 border rounded-lg text-sm font-medium transition-all backdrop-blur-sm ${
+                  isPiPActive 
+                    ? 'bg-cyan-400/20 text-cyan-300 border-cyan-400/50 shadow-[0_0_15px_rgba(0,255,163,0.3)]'
+                    : 'bg-white/[0.05] text-cyan-400 border-white/10 hover:border-cyan-400/30 hover:bg-white/[0.08]'
+                }`}
+              >
+                <PictureInPicture2 size={16} /> 
+                <span className="hidden sm:inline">{isPiPActive ? 'PiP Activo' : 'Flotante'}</span>
+              </button>
+            </div>
+          </div>
           {isRecording && (
             <>
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent animate-pulse opacity-70"></div>
@@ -592,6 +628,9 @@ export default function Home() {
           </AnimatePresence>
         </div>
       </main>
+
+      {/* Botón de donación Solana */}
+      <DonateButton />
 
       {/* Hidden elements for PiP */}
       <canvas ref={canvasRef} width={800} height={250} className="hidden" />
